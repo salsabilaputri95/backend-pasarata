@@ -1,0 +1,364 @@
+package handlers
+
+import (
+	"net/http"
+	"strconv"
+	"time"
+
+	"backend-pasarata/internal/models"
+	"backend-pasarata/internal/services"
+
+	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
+)
+
+type AdminHandler struct {
+	DB *gorm.DB
+}
+
+type CreateCollectorRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required,min=6"`
+	FullName string `json:"full_name" binding:"required"`
+}
+
+type CreateMarketRequest struct {
+	Province string `json:"province" binding:"required"`
+	District string `json:"district" binding:"required"`
+	NKS      string `json:"nks" binding:"required"`
+	Name     string `json:"name" binding:"required"`
+}
+
+type CreateCategoryRequest struct {
+	Name string `json:"name" binding:"required"`
+	Type string `json:"type" binding:"required"`
+}
+
+type CreateCommodityRequest struct {
+	Code       string `json:"code" binding:"required"`
+	Name       string `json:"name" binding:"required"`
+	CategoryID int    `json:"category_id" binding:"required"`
+	BrandType  string `json:"brand_type"`
+}
+
+type CreateUnitRequest struct {
+	Name             string  `json:"name" binding:"required"`
+	IsStandard       bool    `json:"is_standard"`
+	ConversionFactor float64 `json:"conversion_factor"`
+}
+
+type CreateAssignmentRequest struct {
+	UserID   int `json:"user_id" binding:"required"`
+	MarketID int `json:"market_id" binding:"required"`
+}
+
+func (h *AdminHandler) Dashboard(c *gin.Context) {
+	var collectors int64
+	var markets int64
+	var commodityCount int64
+	var totalEntries int64
+	var warningEntries int64
+
+	_ = h.DB.Model(&models.User{}).Where("role = ?", models.RoleCollector).Count(&collectors).Error
+	_ = h.DB.Model(&models.Market{}).Count(&markets).Error
+	_ = h.DB.Model(&models.Commodity{}).Count(&commodityCount).Error
+	_ = h.DB.Model(&models.DataEntry{}).Count(&totalEntries).Error
+	_ = h.DB.Model(&models.DataEntry{}).Where("warning_status != ?", "normal").Count(&warningEntries).Error
+
+	c.JSON(http.StatusOK, gin.H{
+		"collectors":      collectors,
+		"markets":         markets,
+		"commodities":     commodityCount,
+		"total_entries":   totalEntries,
+		"warning_entries": warningEntries,
+		"message":         "admin dashboard",
+	})
+}
+
+func (h *AdminHandler) GetCollectors(c *gin.Context) {
+	var users []models.User
+	if err := h.DB.Where("role = ?", models.RoleCollector).Order("created_at DESC").Find(&users).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load collectors"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": users})
+}
+
+func (h *AdminHandler) CreateCollector(c *gin.Context) {
+	var req CreateCollectorRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	var existing models.User
+	if err := h.DB.Where("username = ?", req.Username).First(&existing).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "username already exists"})
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+		return
+	}
+
+	user := models.User{
+		Username:     req.Username,
+		PasswordHash: string(hash),
+		FullName:     req.FullName,
+		Role:         models.RoleCollector,
+		Status:       models.UserStatusActive,
+	}
+
+	if err := h.DB.Create(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create collector"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "collector created", "data": user})
+}
+
+func (h *AdminHandler) GetMarkets(c *gin.Context) {
+	var markets []models.Market
+	if err := h.DB.Order("created_at DESC").Find(&markets).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load markets"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": markets})
+}
+
+func (h *AdminHandler) CreateMarket(c *gin.Context) {
+	var req CreateMarketRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid market payload"})
+		return
+	}
+
+	market := models.Market{
+		Province: req.Province,
+		District: req.District,
+		NKS:      req.NKS,
+		Name:     req.Name,
+		Active:   true,
+	}
+
+	if err := h.DB.Create(&market).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create market"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "market created", "data": market})
+}
+
+func (h *AdminHandler) GetCategories(c *gin.Context) {
+	var categories []models.CommodityCategory
+	if err := h.DB.Order("created_at DESC").Find(&categories).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load categories"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": categories})
+}
+
+func (h *AdminHandler) CreateCategory(c *gin.Context) {
+	var req CreateCategoryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid category payload"})
+		return
+	}
+
+	category := models.CommodityCategory{
+		Name:   req.Name,
+		Type:   req.Type,
+		Active: true,
+	}
+
+	if err := h.DB.Create(&category).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create category"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "category created", "data": category})
+}
+
+func (h *AdminHandler) GetCommodities(c *gin.Context) {
+	var commodities []models.Commodity
+	if err := h.DB.Preload("Category").Order("created_at DESC").Find(&commodities).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load commodities"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": commodities})
+}
+
+func (h *AdminHandler) CreateCommodity(c *gin.Context) {
+	var req CreateCommodityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid commodity payload"})
+		return
+	}
+
+	commodity := models.Commodity{
+		Code:       req.Code,
+		Name:       req.Name,
+		CategoryID: req.CategoryID,
+		BrandType:  req.BrandType,
+		Active:     true,
+	}
+
+	if err := h.DB.Create(&commodity).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create commodity"})
+		return
+	}
+
+	_ = h.DB.Preload("Category").First(&commodity, commodity.ID)
+	c.JSON(http.StatusCreated, gin.H{"message": "commodity created", "data": commodity})
+}
+
+func (h *AdminHandler) GetUnits(c *gin.Context) {
+	var units []models.Unit
+	if err := h.DB.Order("created_at DESC").Find(&units).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load units"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": units})
+}
+
+func (h *AdminHandler) CreateUnit(c *gin.Context) {
+	var req CreateUnitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid unit payload"})
+		return
+	}
+
+	unit := models.Unit{
+		Name:             req.Name,
+		IsStandard:       req.IsStandard,
+		ConversionFactor: req.ConversionFactor,
+		Active:           true,
+	}
+
+	if err := h.DB.Create(&unit).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create unit"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "unit created", "data": unit})
+}
+
+func (h *AdminHandler) GetAssignments(c *gin.Context) {
+	var assignments []models.UserMarketAssignment
+	if err := h.DB.Preload("User").Preload("Market").Order("created_at DESC").Find(&assignments).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load assignments"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": assignments})
+}
+
+func (h *AdminHandler) CreateAssignment(c *gin.Context) {
+	var req CreateAssignmentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid assignment payload"})
+		return
+	}
+
+	var user models.User
+	if err := h.DB.First(&user, req.UserID).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "collector not found"})
+		return
+	}
+	var market models.Market
+	if err := h.DB.First(&market, req.MarketID).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "market not found"})
+		return
+	}
+
+	var existing models.UserMarketAssignment
+	if err := h.DB.Where("user_id = ? AND market_id = ?", req.UserID, req.MarketID).First(&existing).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "assignment already exists"})
+		return
+	}
+
+	assignment := models.UserMarketAssignment{UserID: req.UserID, MarketID: req.MarketID}
+	if err := h.DB.Create(&assignment).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create assignment"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "assignment created", "data": assignment})
+}
+
+func (h *AdminHandler) GetEntries(c *gin.Context) {
+	var entries []models.DataEntry
+	if err := h.DB.
+		Preload("Market").
+		Preload("Collector").
+		Preload("Category").
+		Preload("Commodity").
+		Preload("LocalUnit").
+		Preload("StandardUnit").
+		Order("created_at DESC").
+		Find(&entries).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load entries"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": entries})
+}
+
+func (h *AdminHandler) GetAuditLogs(c *gin.Context) {
+	var logs []models.AuditLog
+	if err := h.DB.
+		Preload("User").
+		Order("created_at DESC").
+		Find(&logs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load audit logs"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": logs})
+}
+
+func (h *AdminHandler) GetComparison(c *gin.Context) {
+	yearQuery := c.DefaultQuery("year", strconv.Itoa(time.Now().Year()))
+	year, err := strconv.Atoi(yearQuery)
+	if err != nil || year < 2020 || year > 2100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid year"})
+		return
+	}
+
+	var entries []models.DataEntry
+	if err := h.DB.
+		Preload("Market").
+		Preload("Commodity").
+		Find(&entries).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load comparison data"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"year": year,
+		"data": services.BuildMarketComparison(entries, year),
+	})
+}
+
+func (h *AdminHandler) GetSummary(c *gin.Context) {
+	yearQuery := c.DefaultQuery("year", strconv.Itoa(time.Now().Year()))
+	year, err := strconv.Atoi(yearQuery)
+	if err != nil || year < 2020 || year > 2100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid year"})
+		return
+	}
+
+	var entries []models.DataEntry
+	if err := h.DB.
+		Preload("Market").
+		Preload("Commodity").
+		Find(&entries).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load summary data"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"year": year,
+		"data": services.BuildMarketSummary(entries, year),
+	})
+}
