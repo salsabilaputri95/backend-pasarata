@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"encoding/csv"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend-pasarata/internal/models"
@@ -361,4 +364,134 @@ func (h *AdminHandler) GetSummary(c *gin.Context) {
 		"year": year,
 		"data": services.BuildMarketSummary(entries, year),
 	})
+}
+
+func (h *AdminHandler) ExportCSV(c *gin.Context) {
+	year, ok := parseYearParam(c)
+	if !ok {
+		return
+	}
+
+	scope := c.DefaultQuery("scope", "summary")
+	var entries []models.DataEntry
+	query := h.DB.Where("year = ?", year)
+
+	switch scope {
+	case "entries":
+		query = query.
+			Preload("Market").
+			Preload("Collector").
+			Preload("Category").
+			Preload("Commodity").
+			Preload("LocalUnit").
+			Preload("StandardUnit")
+	case "summary", "comparison":
+		query = query.
+			Preload("Market").
+			Preload("Commodity")
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid scope, use entries|summary|comparison"})
+		return
+	}
+
+	if err := query.Find(&entries).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load export data"})
+		return
+	}
+
+	content, err := buildCSVContent(scope, year, entries)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build csv"})
+		return
+	}
+
+	filename := fmt.Sprintf("pasarata-%s-%d.csv", scope, year)
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	c.Data(http.StatusOK, "text/csv; charset=utf-8", content)
+}
+
+func parseYearParam(c *gin.Context) (int, bool) {
+	yearQuery := c.DefaultQuery("year", strconv.Itoa(time.Now().Year()))
+	year, err := strconv.Atoi(yearQuery)
+	if err != nil || year < 2020 || year > 2100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid year"})
+		return 0, false
+	}
+	return year, true
+}
+
+func buildCSVContent(scope string, year int, entries []models.DataEntry) ([]byte, error) {
+	var builder strings.Builder
+	builder.WriteString("\ufeff")
+	writer := csv.NewWriter(&builder)
+
+	switch scope {
+	case "summary":
+		if err := writer.Write([]string{"year", "market", "commodity", "average_price", "min_price", "max_price", "count"}); err != nil {
+			return nil, err
+		}
+		for _, row := range services.BuildMarketSummary(entries, year) {
+			record := []string{
+				strconv.Itoa(row.Year),
+				row.MarketName,
+				row.CommodityName,
+				strconv.FormatFloat(row.AveragePrice, 'f', 2, 64),
+				strconv.FormatFloat(row.MinPrice, 'f', 2, 64),
+				strconv.FormatFloat(row.MaxPrice, 'f', 2, 64),
+				strconv.Itoa(row.Count),
+			}
+			if err := writer.Write(record); err != nil {
+				return nil, err
+			}
+		}
+	case "comparison":
+		if err := writer.Write([]string{"current_year", "previous_year", "market", "commodity", "current_average", "previous_average", "delta", "delta_percent"}); err != nil {
+			return nil, err
+		}
+		for _, row := range services.BuildMarketComparison(entries, year) {
+			record := []string{
+				strconv.Itoa(row.CurrentYear),
+				strconv.Itoa(row.PreviousYear),
+				row.MarketName,
+				row.CommodityName,
+				strconv.FormatFloat(row.CurrentAverage, 'f', 2, 64),
+				strconv.FormatFloat(row.PreviousAverage, 'f', 2, 64),
+				strconv.FormatFloat(row.Delta, 'f', 2, 64),
+				strconv.FormatFloat(row.DeltaPercent, 'f', 2, 64),
+			}
+			if err := writer.Write(record); err != nil {
+				return nil, err
+			}
+		}
+	case "entries":
+		if err := writer.Write([]string{"id", "year", "market", "collector", "category", "commodity", "market_price", "minimum_price", "maximum_price", "warning_status", "created_at", "notes"}); err != nil {
+			return nil, err
+		}
+		for _, row := range entries {
+			record := []string{
+				strconv.Itoa(row.ID),
+				strconv.Itoa(row.Year),
+				row.Market.Name,
+				row.Collector.FullName,
+				row.Category.Name,
+				row.Commodity.Name,
+				strconv.FormatFloat(row.MarketPrice, 'f', 2, 64),
+				strconv.FormatFloat(row.MinimumPrice, 'f', 2, 64),
+				strconv.FormatFloat(row.MaximumPrice, 'f', 2, 64),
+				row.WarningStatus,
+				row.CreatedAt.Format(time.RFC3339),
+				row.Notes,
+			}
+			if err := writer.Write(record); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, err
+	}
+
+	return []byte(builder.String()), nil
 }

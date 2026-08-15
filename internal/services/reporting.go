@@ -7,24 +7,24 @@ import (
 )
 
 type MarketComparison struct {
-	MarketName      string
-	CommodityName   string
-	CurrentYear     int
-	PreviousYear    int
-	CurrentAverage  float64
-	PreviousAverage float64
-	Delta           float64
-	DeltaPercent    float64
+	MarketName      string  `json:"market_name"`
+	CommodityName   string  `json:"commodity_name"`
+	CurrentYear     int     `json:"current_year"`
+	PreviousYear    int     `json:"previous_year"`
+	CurrentAverage  float64 `json:"current_average"`
+	PreviousAverage float64 `json:"previous_average"`
+	Delta           float64 `json:"delta"`
+	DeltaPercent    float64 `json:"delta_percent"`
 }
 
 type MarketSummary struct {
-	MarketName    string
-	CommodityName string
-	Year          int
-	AveragePrice  float64
-	MinPrice      float64
-	MaxPrice      float64
-	Count         int
+	MarketName    string  `json:"market_name"`
+	CommodityName string  `json:"commodity_name"`
+	Year          int     `json:"year"`
+	AveragePrice  float64 `json:"average_price"`
+	MinPrice      float64 `json:"min_price"`
+	MaxPrice      float64 `json:"max_price"`
+	Count         int     `json:"count"`
 }
 
 func BuildMarketComparison(entries []models.DataEntry, currentYear int) []MarketComparison {
