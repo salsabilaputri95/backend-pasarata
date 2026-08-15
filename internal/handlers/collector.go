@@ -286,7 +286,7 @@ func validateEntryRequest(req EntryCreateRequest) error {
 }
 
 func buildEntryFromRequest(req EntryCreateRequest, collectorID int, now time.Time) models.DataEntry {
-	converted := services.CalculateConvertedPrice(req.MarketPrice, req.LocalWeightKg, 1.0)
+	converted := services.CalculateConvertedPrice(req.MarketPrice, req.LocalQuantity, req.LocalWeightKg, 1.0)
 	warning := services.WarningStatus(req.MarketPrice, req.MinimumPrice, req.MaximumPrice)
 
 	return models.DataEntry{
@@ -341,3 +341,78 @@ func entrySnapshot(entry models.DataEntry) string {
 	}
 	return string(raw)
 }
+
+// GetPriceReference — GET /api/price-reference?commodity_id=&market_id=&year=
+// Mencari referensi harga dari data tahun sebelumnya (year-1).
+// Prioritas: sama market+commodity; fallback: seluruh pasar untuk commodity tersebut.
+// Jika tidak ada data → 404, client harus tetap bisa input manual.
+func (h *CollectorHandler) GetPriceReference(c *gin.Context) {
+	commodityIDStr := c.Query("commodity_id")
+	marketIDStr := c.Query("market_id")
+	yearStr := c.Query("year")
+
+	commodityID, err := strconv.Atoi(commodityIDStr)
+	if err != nil || commodityID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "commodity_id diperlukan"})
+		return
+	}
+
+	year, err := strconv.Atoi(yearStr)
+	if err != nil || year < 2020 {
+		year = time.Now().Year()
+	}
+	refYear := year - 1
+
+	marketID, _ := strconv.Atoi(marketIDStr)
+
+	type refResult struct {
+		MinPrice float64
+		MaxPrice float64
+		AvgPrice float64
+		Count    int64
+	}
+
+	var result refResult
+
+	// Prioritas 1: same market + commodity
+	if marketID > 0 {
+		row := h.DB.Model(&models.DataEntry{}).
+			Where("commodity_id = ? AND market_id = ? AND year = ? AND is_active = true", commodityID, marketID, refYear).
+			Select("MIN(minimum_price) as min_price, MAX(maximum_price) as max_price, AVG(market_price) as avg_price, COUNT(*) as count").
+			Row()
+		_ = row.Scan(&result.MinPrice, &result.MaxPrice, &result.AvgPrice, &result.Count)
+	}
+
+	// Fallback: any market for this commodity
+	if result.Count == 0 {
+		row := h.DB.Model(&models.DataEntry{}).
+			Where("commodity_id = ? AND year = ? AND is_active = true", commodityID, refYear).
+			Select("MIN(minimum_price) as min_price, MAX(maximum_price) as max_price, AVG(market_price) as avg_price, COUNT(*) as count").
+			Row()
+		_ = row.Scan(&result.MinPrice, &result.MaxPrice, &result.AvgPrice, &result.Count)
+	}
+
+	if result.Count == 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"found":        false,
+			"ref_year":     refYear,
+			"commodity_id": commodityID,
+			"market_id":    marketID,
+			"message":      "tidak ada data referensi untuk tahun " + strconv.Itoa(refYear),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"found":          true,
+		"ref_year":       refYear,
+		"commodity_id":   commodityID,
+		"market_id":      marketID,
+		"scope":          map[bool]string{true: "market+commodity", false: "commodity-only"}[marketID > 0],
+		"minimum_price":  result.MinPrice,
+		"maximum_price":  result.MaxPrice,
+		"previous_price": result.AvgPrice,
+		"sample_count":   result.Count,
+	})
+}
+

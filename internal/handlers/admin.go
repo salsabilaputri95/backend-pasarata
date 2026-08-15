@@ -56,6 +56,28 @@ type CreateAssignmentRequest struct {
 	MarketID int `json:"market_id" binding:"required"`
 }
 
+type YearBreakdown struct {
+	Year           int   `json:"year"`
+	TotalEntries   int64 `json:"total_entries"`
+	WarningEntries int64 `json:"warning_entries"`
+}
+
+type MarketBreakdown struct {
+	MarketID       int    `json:"market_id"`
+	MarketName     string `json:"market_name"`
+	District       string `json:"district"`
+	TotalEntries   int64  `json:"total_entries"`
+	WarningEntries int64  `json:"warning_entries"`
+}
+
+type CollectorBreakdown struct {
+	CollectorID    int    `json:"collector_id"`
+	CollectorName  string `json:"collector_name"`
+	Username       string `json:"username"`
+	TotalEntries   int64  `json:"total_entries"`
+	WarningEntries int64  `json:"warning_entries"`
+}
+
 func (h *AdminHandler) Dashboard(c *gin.Context) {
 	var collectors int64
 	var markets int64
@@ -69,15 +91,58 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 	_ = h.DB.Model(&models.DataEntry{}).Count(&totalEntries).Error
 	_ = h.DB.Model(&models.DataEntry{}).Where("warning_status != ?", "normal").Count(&warningEntries).Error
 
+	// Breakdown per Tahun
+	var byYear []YearBreakdown
+	_ = h.DB.Model(&models.DataEntry{}).
+		Select("year, count(*) as total_entries, sum(case when warning_status != 'normal' then 1 else 0 end) as warning_entries").
+		Group("year").
+		Order("year DESC").
+		Scan(&byYear).Error
+
+	// Breakdown per Pasar
+	var byMarket []MarketBreakdown
+	_ = h.DB.Table("data_entries").
+		Select("data_entries.market_id, markets.name as market_name, markets.district, count(*) as total_entries, sum(case when data_entries.warning_status != 'normal' then 1 else 0 end) as warning_entries").
+		Joins("LEFT JOIN markets ON markets.id = data_entries.market_id").
+		Group("data_entries.market_id, markets.name, markets.district").
+		Order("total_entries DESC").
+		Scan(&byMarket).Error
+
+	// Breakdown per Pendata
+	var byCollector []CollectorBreakdown
+	_ = h.DB.Table("data_entries").
+		Select("data_entries.collector_id, users.full_name as collector_name, users.username, count(*) as total_entries, sum(case when data_entries.warning_status != 'normal' then 1 else 0 end) as warning_entries").
+		Joins("LEFT JOIN users ON users.id = data_entries.collector_id").
+		Group("data_entries.collector_id, users.full_name, users.username").
+		Order("total_entries DESC").
+		Scan(&byCollector).Error
+
+	// 10 Entri Terbaru
+	var recentEntries []models.DataEntry
+	_ = h.DB.Preload("Market").
+		Preload("Collector").
+		Preload("Category").
+		Preload("Commodity").
+		Preload("LocalUnit").
+		Preload("StandardUnit").
+		Order("created_at DESC").
+		Limit(10).
+		Find(&recentEntries).Error
+
 	c.JSON(http.StatusOK, gin.H{
 		"collectors":      collectors,
 		"markets":         markets,
 		"commodities":     commodityCount,
 		"total_entries":   totalEntries,
 		"warning_entries": warningEntries,
+		"by_year":         byYear,
+		"by_market":       byMarket,
+		"by_collector":    byCollector,
+		"recent_entries":  recentEntries,
 		"message":         "admin dashboard",
 	})
 }
+
 
 func (h *AdminHandler) GetCollectors(c *gin.Context) {
 	var users []models.User
@@ -494,4 +559,249 @@ func buildCSVContent(scope string, year int, entries []models.DataEntry) ([]byte
 	}
 
 	return []byte(builder.String()), nil
+}
+func (h *AdminHandler) UpdateMarket(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var req CreateMarketRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+	var market models.Market
+	if err := h.DB.First(&market, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "market not found"})
+		return
+	}
+	market.Province = req.Province
+	market.District = req.District
+	market.NKS = req.NKS
+	market.Name = req.Name
+	if err := h.DB.Save(&market).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update market"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "market updated", "data": market})
+}
+
+func (h *AdminHandler) SetMarketStatus(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var body struct {
+		Active bool `json:"active"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+	var market models.Market
+	if err := h.DB.First(&market, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "market not found"})
+		return
+	}
+	market.Active = body.Active
+	if err := h.DB.Save(&market).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update market status"})
+		return
+	}
+	status := "nonaktif"
+	if body.Active {
+		status = "aktif"
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "market " + status, "data": market})
+}
+
+func (h *AdminHandler) UpdateCategory(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var req CreateCategoryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+	var category models.CommodityCategory
+	if err := h.DB.First(&category, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "category not found"})
+		return
+	}
+	category.Name = req.Name
+	category.Type = req.Type
+	if err := h.DB.Save(&category).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update category"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "category updated", "data": category})
+}
+
+func (h *AdminHandler) SetCategoryStatus(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var body struct {
+		Active bool `json:"active"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+	var category models.CommodityCategory
+	if err := h.DB.First(&category, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "category not found"})
+		return
+	}
+	category.Active = body.Active
+	if err := h.DB.Save(&category).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update category status"})
+		return
+	}
+	status := "nonaktif"
+	if body.Active {
+		status = "aktif"
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "category " + status, "data": category})
+}
+
+func (h *AdminHandler) UpdateCommodity(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var req CreateCommodityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+	var commodity models.Commodity
+	if err := h.DB.First(&commodity, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "commodity not found"})
+		return
+	}
+	commodity.Code = req.Code
+	commodity.Name = req.Name
+	commodity.CategoryID = req.CategoryID
+	commodity.BrandType = req.BrandType
+	if err := h.DB.Save(&commodity).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update commodity"})
+		return
+	}
+	_ = h.DB.Preload("Category").First(&commodity, commodity.ID)
+	c.JSON(http.StatusOK, gin.H{"message": "commodity updated", "data": commodity})
+}
+
+func (h *AdminHandler) SetCommodityStatus(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var body struct {
+		Active bool `json:"active"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+	var commodity models.Commodity
+	if err := h.DB.First(&commodity, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "commodity not found"})
+		return
+	}
+	commodity.Active = body.Active
+	if err := h.DB.Save(&commodity).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update commodity status"})
+		return
+	}
+	status := "nonaktif"
+	if body.Active {
+		status = "aktif"
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "commodity " + status, "data": commodity})
+}
+
+func (h *AdminHandler) UpdateUnit(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var req CreateUnitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+	var unit models.Unit
+	if err := h.DB.First(&unit, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "unit not found"})
+		return
+	}
+	unit.Name = req.Name
+	unit.IsStandard = req.IsStandard
+	unit.ConversionFactor = req.ConversionFactor
+	if err := h.DB.Save(&unit).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update unit"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "unit updated", "data": unit})
+}
+
+func (h *AdminHandler) SetUnitStatus(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var body struct {
+		Active bool `json:"active"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+	var unit models.Unit
+	if err := h.DB.First(&unit, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "unit not found"})
+		return
+	}
+	unit.Active = body.Active
+	if err := h.DB.Save(&unit).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update unit status"})
+		return
+	}
+	status := "nonaktif"
+	if body.Active {
+		status = "aktif"
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "unit " + status, "data": unit})
+}
+
+// DeleteAssignment — DELETE /api/admin/assignments/:id
+// Setelah dihapus, Pendata tidak bisa lagi input ke pasar tersebut.
+func (h *AdminHandler) DeleteAssignment(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var assignment models.UserMarketAssignment
+	if err := h.DB.First(&assignment, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "assignment not found"})
+		return
+	}
+	if err := h.DB.Delete(&assignment).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete assignment"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "assignment deleted"})
 }

@@ -88,7 +88,7 @@ func (h *AdminHandler) ImportEntries(c *gin.Context) {
 	}
 
 	for _, row := range validRows {
-		converted := services.CalculateConvertedPrice(row.MarketPrice, row.LocalWeightKg, 1.0)
+		converted := services.CalculateConvertedPrice(row.MarketPrice, row.LocalQuantity, row.LocalWeightKg, 1.0)
 		warning := services.WarningStatus(row.MarketPrice, row.MinimumPrice, row.MaximumPrice)
 
 		entry := models.DataEntry{
