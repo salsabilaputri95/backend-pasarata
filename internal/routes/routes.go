@@ -24,6 +24,7 @@ func SetupRoutes(api *gin.RouterGroup, cfg config.Config, db *gorm.DB) {
 	authenticatedGroup.POST("/entries", collectorHandler.CreateEntry)
 	authenticatedGroup.PUT("/entries/:id", collectorHandler.UpdateEntry)
 	authenticatedGroup.PATCH("/entries/:id/deactivate", collectorHandler.DeactivateEntry)
+	authenticatedGroup.GET("/entries/:id/audit", collectorHandler.GetEntryAudit)
 	authenticatedGroup.GET("/markets", adminHandler.GetMarkets)
 	authenticatedGroup.GET("/categories", adminHandler.GetCategories)
 	authenticatedGroup.GET("/commodities", adminHandler.GetCommodities)
@@ -65,6 +66,11 @@ func SetupRoutes(api *gin.RouterGroup, cfg config.Config, db *gorm.DB) {
 	adminGroup.GET("/summary", adminHandler.GetSummary)
 	adminGroup.GET("/export", adminHandler.ExportCSV)
 	adminGroup.GET("/export-report", adminHandler.ExportReport)
+	adminGroup.POST("/import/headers", adminHandler.InspectImportHeaders)
 	adminGroup.POST("/import/preview", adminHandler.PreviewImportEntries)
 	adminGroup.POST("/import/commit", adminHandler.ImportEntries)
+	adminGroup.POST("/import/master/preview", adminHandler.PreviewImportMaster)
+	adminGroup.POST("/import/master/commit", adminHandler.ImportMaster)
 }
+
+

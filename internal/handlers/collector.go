@@ -416,3 +416,37 @@ func (h *CollectorHandler) GetPriceReference(c *gin.Context) {
 	})
 }
 
+// GetEntryAudit — GET /api/entries/:id/audit
+// Memperbolehkan pendata melihat riwayat perubahan data miliknya (atau admin).
+func (h *CollectorHandler) GetEntryAudit(c *gin.Context) {
+	userID := c.MustGet("user_id").(int)
+	role := c.MustGet("role").(string)
+
+	entryID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || entryID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id entri tidak valid"})
+		return
+	}
+
+	var entry models.DataEntry
+	if err := h.DB.First(&entry, entryID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "data entri tidak ditemukan"})
+		return
+	}
+
+	// Pembatasan akses: jika bukan admin, hanya boleh lihat entri yang dibuatnya sendiri
+	if role != "admin" && entry.CollectorID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Anda tidak memiliki akses ke histori data pendata lain"})
+		return
+	}
+
+	var logs []models.AuditLog
+	if err := h.DB.Where("entry_id = ?", entryID).Order("created_at DESC").Find(&logs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "gagal memuat histori perubahan data"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": logs})
+}
+
+
