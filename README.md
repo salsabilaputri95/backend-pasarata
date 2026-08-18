@@ -109,15 +109,15 @@ Pastikan telah menginstal perangkat lunak berikut:
 
 3. **Sesuaikan variabel environment di dalam file `.env`:**
    ```env
-   PORT=8080
-   JWT_SECRET=rahasia-kunci-jwt-pasarata-2026
-   DB_HOST=localhost
-   DB_PORT=5432
-   DB_USER=postgres
-   DB_PASSWORD=postgres
-   DB_NAME=pasarata
-   DB_SSLMODE=disable
-   FRONTEND_URL=http://localhost:3000
+   PORT=
+   JWT_SECRET=
+   DB_HOST=
+   DB_PORT=
+   DB_USER=
+   DB_PASSWORD=
+   DB_NAME=
+   DB_SSLMODE=
+   FRONTEND_URL=
    ```
 
 4. **Buat database di PostgreSQL:**
@@ -212,23 +212,3 @@ Saat pertama kali dijalankan, sistem akan otomatis:
 
 ---
 
-## 📂 Struktur Direktori
-
-```text
-backend-pasarata/
-├── cmd/
-│   └── api/
-│       └── main.go              # Entry point inisialisasi server, DB, & routing
-├── internal/
-│   ├── config/                  # Pengaturan environment & konfigurasi aplikasi
-│   ├── db/                      # Koneksi database PostgreSQL & auto migration
-│   ├── handlers/                # Controller/handler HTTP (Auth, Admin, Collector, Data Ops)
-│   ├── middleware/              # Middleware JWT authentication, CORS, & role guard
-│   ├── models/                  # Struct model data database & DTO request/response
-│   ├── routes/                  # Definisi registrasi endpoint routing API
-│   └── services/                # Logika bisnis, validasi harga, rumus konversi, & audit trail
-├── migrations/                  # Skrip SQL inisialisasi skema database
-├── .env.example                 # Contoh template konfigurasi environment
-├── go.mod                       # Definisi modul & dependensi Go
-└── go.sum                       # Checksum dependensi Go
-```
