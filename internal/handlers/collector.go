@@ -29,8 +29,8 @@ type EntryCreateRequest struct {
 	LocalWeightKg  float64 `json:"local_weight_kg" binding:"required"`
 	StandardUnitID int     `json:"standard_unit_id" binding:"required"`
 	MarketPrice    float64 `json:"market_price" binding:"required"`
-	MinimumPrice   float64 `json:"minimum_price" binding:"required"`
-	MaximumPrice   float64 `json:"maximum_price" binding:"required"`
+	MinimumPrice   float64 `json:"minimum_price"`
+	MaximumPrice   float64 `json:"maximum_price"`
 	PreviousPrice  float64 `json:"previous_price"`
 	Notes          string  `json:"notes"`
 }
