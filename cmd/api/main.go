@@ -30,9 +30,11 @@ func main() {
 
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{cfg.FrontendURL, "http://localhost:3000", "http://127.0.0.1:3000"},
+		AllowOriginFunc: func(origin string) bool {
+			return true
+		},
 		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
@@ -45,7 +47,7 @@ func main() {
 
 	routes.SetupRoutes(api, cfg, gormDB)
 
-	if err := r.Run("0.0.0.0:" + cfg.Port); err != nil {
+	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("server start: %v", err)
 	}
 }

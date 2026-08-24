@@ -7,24 +7,54 @@ import (
 )
 
 type MarketComparison struct {
-	MarketName      string  `json:"market_name"`
-	CommodityName   string  `json:"commodity_name"`
-	CurrentYear     int     `json:"current_year"`
-	PreviousYear    int     `json:"previous_year"`
-	CurrentAverage  float64 `json:"current_average"`
-	PreviousAverage float64 `json:"previous_average"`
-	Delta           float64 `json:"delta"`
-	DeltaPercent    float64 `json:"delta_percent"`
+	MarketName       string  `json:"market_name"`
+	CommodityCode    string  `json:"commodity_code"`
+	CommodityName    string  `json:"commodity_name"`
+	StandardWeight   string  `json:"standard_weight"`
+	StandardUnitName string  `json:"standard_unit_name"`
+	CurrentYear      int     `json:"current_year"`
+	PreviousYear     int     `json:"previous_year"`
+	CurrentAverage   float64 `json:"current_average"`
+	PreviousAverage  float64 `json:"previous_average"`
+	Delta            float64 `json:"delta"`
+	DeltaPercent     float64 `json:"delta_percent"`
 }
 
 type MarketSummary struct {
-	MarketName    string  `json:"market_name"`
-	CommodityName string  `json:"commodity_name"`
-	Year          int     `json:"year"`
-	AveragePrice  float64 `json:"average_price"`
-	MinPrice      float64 `json:"min_price"`
-	MaxPrice      float64 `json:"max_price"`
-	Count         int     `json:"count"`
+	MarketName       string  `json:"market_name"`
+	CommodityCode    string  `json:"commodity_code"`
+	CommodityName    string  `json:"commodity_name"`
+	StandardWeight   string  `json:"standard_weight"`
+	StandardUnitName string  `json:"standard_unit_name"`
+	Year             int     `json:"year"`
+	AveragePrice     float64 `json:"average_price"`
+	MinPrice         float64 `json:"min_price"`
+	MaxPrice         float64 `json:"max_price"`
+	Count            int     `json:"count"`
+}
+
+func getStandardWeightString(entry models.DataEntry) string {
+	stdName := "kg"
+	if entry.Commodity.StandardUnit != nil && entry.Commodity.StandardUnit.Name != "" {
+		stdName = entry.Commodity.StandardUnit.Name
+	} else if entry.StandardUnit.Name != "" {
+		stdName = entry.StandardUnit.Name
+	}
+
+	if entry.LocalWeightKg > 0 {
+		return fmt.Sprintf("%g %s", entry.LocalWeightKg, stdName)
+	}
+	return fmt.Sprintf("1 %s", stdName)
+}
+
+func getStandardUnitName(entry models.DataEntry) string {
+	if entry.Commodity.StandardUnit != nil && entry.Commodity.StandardUnit.Name != "" {
+		return entry.Commodity.StandardUnit.Name
+	}
+	if entry.StandardUnit.Name != "" {
+		return entry.StandardUnit.Name
+	}
+	return "kg"
 }
 
 func BuildMarketComparison(entries []models.DataEntry, currentYear int) []MarketComparison {
@@ -33,17 +63,23 @@ func BuildMarketComparison(entries []models.DataEntry, currentYear int) []Market
 	}
 
 	grouped := map[string]struct {
-		marketName    string
-		commodityName string
-		current       []float64
-		previous      []float64
+		marketName       string
+		commodityCode    string
+		commodityName    string
+		standardWeight   string
+		standardUnitName string
+		current          []float64
+		previous         []float64
 	}{}
 
 	for _, entry := range entries {
 		key := fmt.Sprintf("%d:%d", entry.MarketID, entry.CommodityID)
 		bucket := grouped[key]
 		bucket.marketName = entry.Market.Name
+		bucket.commodityCode = entry.Commodity.Code
 		bucket.commodityName = entry.Commodity.Name
+		bucket.standardWeight = getStandardWeightString(entry)
+		bucket.standardUnitName = getStandardUnitName(entry)
 
 		if entry.Year == currentYear {
 			bucket.current = append(bucket.current, entry.MarketPrice)
@@ -77,14 +113,17 @@ func BuildMarketComparison(entries []models.DataEntry, currentYear int) []Market
 		}
 
 		comparison = append(comparison, MarketComparison{
-			MarketName:      bucket.marketName,
-			CommodityName:   bucket.commodityName,
-			CurrentYear:     currentYear,
-			PreviousYear:    currentYear - 1,
-			CurrentAverage:  currentAverage,
-			PreviousAverage: previousAverage,
-			Delta:           delta,
-			DeltaPercent:    deltaPercent,
+			MarketName:       bucket.marketName,
+			CommodityCode:    bucket.commodityCode,
+			CommodityName:    bucket.commodityName,
+			StandardWeight:   bucket.standardWeight,
+			StandardUnitName: bucket.standardUnitName,
+			CurrentYear:      currentYear,
+			PreviousYear:     currentYear - 1,
+			CurrentAverage:   currentAverage,
+			PreviousAverage:  previousAverage,
+			Delta:            delta,
+			DeltaPercent:     deltaPercent,
 		})
 	}
 
@@ -97,9 +136,12 @@ func BuildMarketSummary(entries []models.DataEntry, year int) []MarketSummary {
 	}
 
 	grouped := map[string]struct {
-		marketName    string
-		commodityName string
-		prices        []float64
+		marketName       string
+		commodityCode    string
+		commodityName    string
+		standardWeight   string
+		standardUnitName string
+		prices           []float64
 	}{}
 
 	for _, entry := range entries {
@@ -110,7 +152,10 @@ func BuildMarketSummary(entries []models.DataEntry, year int) []MarketSummary {
 		key := fmt.Sprintf("%d:%d", entry.MarketID, entry.CommodityID)
 		bucket := grouped[key]
 		bucket.marketName = entry.Market.Name
+		bucket.commodityCode = entry.Commodity.Code
 		bucket.commodityName = entry.Commodity.Name
+		bucket.standardWeight = getStandardWeightString(entry)
+		bucket.standardUnitName = getStandardUnitName(entry)
 		bucket.prices = append(bucket.prices, entry.MarketPrice)
 		grouped[key] = bucket
 	}
@@ -133,13 +178,16 @@ func BuildMarketSummary(entries []models.DataEntry, year int) []MarketSummary {
 		max := maxValue(bucket.prices)
 
 		summary = append(summary, MarketSummary{
-			MarketName:    bucket.marketName,
-			CommodityName: bucket.commodityName,
-			Year:          year,
-			AveragePrice:  avg,
-			MinPrice:      min,
-			MaxPrice:      max,
-			Count:         len(bucket.prices),
+			MarketName:       bucket.marketName,
+			CommodityCode:    bucket.commodityCode,
+			CommodityName:    bucket.commodityName,
+			StandardWeight:   bucket.standardWeight,
+			StandardUnitName: bucket.standardUnitName,
+			Year:             year,
+			AveragePrice:     avg,
+			MinPrice:         min,
+			MaxPrice:         max,
+			Count:            len(bucket.prices),
 		})
 	}
 

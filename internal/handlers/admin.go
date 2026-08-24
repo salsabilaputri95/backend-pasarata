@@ -39,15 +39,18 @@ type CreateCategoryRequest struct {
 }
 
 type CreateCommodityRequest struct {
-	Code       string `json:"code" binding:"required"`
-	Name       string `json:"name" binding:"required"`
-	CategoryID int    `json:"category_id" binding:"required"`
-	BrandType  string `json:"brand_type"`
+	Code           string `json:"code" binding:"required"`
+	Name           string `json:"name" binding:"required"`
+	CategoryID     int    `json:"category_id" binding:"required"`
+	StandardUnitID *int   `json:"standard_unit_id"`
+	BrandType      string `json:"brand_type"`
 }
 
 type CreateUnitRequest struct {
 	Name             string  `json:"name" binding:"required"`
 	IsStandard       bool    `json:"is_standard"`
+	StandardValue    float64 `json:"standard_value"`
+	StandardUnitName string  `json:"standard_unit_name"`
 	ConversionFactor float64 `json:"conversion_factor"`
 }
 
@@ -252,7 +255,7 @@ func (h *AdminHandler) CreateCategory(c *gin.Context) {
 
 func (h *AdminHandler) GetCommodities(c *gin.Context) {
 	var commodities []models.Commodity
-	if err := h.DB.Preload("Category").Order("created_at DESC").Find(&commodities).Error; err != nil {
+	if err := h.DB.Preload("Category").Preload("StandardUnit").Order("created_at DESC").Find(&commodities).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load commodities"})
 		return
 	}
@@ -267,11 +270,12 @@ func (h *AdminHandler) CreateCommodity(c *gin.Context) {
 	}
 
 	commodity := models.Commodity{
-		Code:       req.Code,
-		Name:       req.Name,
-		CategoryID: req.CategoryID,
-		BrandType:  req.BrandType,
-		Active:     true,
+		Code:           req.Code,
+		Name:           req.Name,
+		CategoryID:     req.CategoryID,
+		StandardUnitID: req.StandardUnitID,
+		BrandType:      req.BrandType,
+		Active:         true,
 	}
 
 	if err := h.DB.Create(&commodity).Error; err != nil {
@@ -279,7 +283,7 @@ func (h *AdminHandler) CreateCommodity(c *gin.Context) {
 		return
 	}
 
-	_ = h.DB.Preload("Category").First(&commodity, commodity.ID)
+	_ = h.DB.Preload("Category").Preload("StandardUnit").First(&commodity, commodity.ID)
 	c.JSON(http.StatusCreated, gin.H{"message": "commodity created", "data": commodity})
 }
 
@@ -299,10 +303,22 @@ func (h *AdminHandler) CreateUnit(c *gin.Context) {
 		return
 	}
 
+	stdVal := req.StandardValue
+	if stdVal <= 0 {
+		stdVal = 1
+	}
+
+	convFactor := req.ConversionFactor
+	if convFactor <= 0 {
+		convFactor = 1
+	}
+
 	unit := models.Unit{
 		Name:             req.Name,
 		IsStandard:       req.IsStandard,
-		ConversionFactor: req.ConversionFactor,
+		StandardValue:    stdVal,
+		StandardUnitName: req.StandardUnitName,
+		ConversionFactor: convFactor,
 		Active:           true,
 	}
 
@@ -342,8 +358,15 @@ func (h *AdminHandler) CreateAssignment(c *gin.Context) {
 	}
 
 	var existing models.UserMarketAssignment
-	if err := h.DB.Where("user_id = ? AND market_id = ?", req.UserID, req.MarketID).First(&existing).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "assignment already exists"})
+	// Setiap pendata hanya menangani 1 pasar: jika sudah ada assignment, perbarui ke pasar baru
+	if err := h.DB.Where("user_id = ?", req.UserID).First(&existing).Error; err == nil {
+		existing.MarketID = req.MarketID
+		if err := h.DB.Save(&existing).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update assignment"})
+			return
+		}
+		_ = h.DB.Preload("User").Preload("Market").First(&existing, existing.ID)
+		c.JSON(http.StatusOK, gin.H{"message": "penugasan pasar berhasil diperbarui", "data": existing})
 		return
 	}
 
@@ -353,7 +376,8 @@ func (h *AdminHandler) CreateAssignment(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"message": "assignment created", "data": assignment})
+	_ = h.DB.Preload("User").Preload("Market").First(&assignment, assignment.ID)
+	c.JSON(http.StatusCreated, gin.H{"message": "penugasan pasar berhasil dibuat", "data": assignment})
 }
 
 func (h *AdminHandler) GetEntries(c *gin.Context) {
@@ -397,6 +421,9 @@ func (h *AdminHandler) GetComparison(c *gin.Context) {
 	if err := h.DB.
 		Preload("Market").
 		Preload("Commodity").
+		Preload("Commodity.StandardUnit").
+		Preload("StandardUnit").
+		Preload("LocalUnit").
 		Find(&entries).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load comparison data"})
 		return
@@ -420,6 +447,9 @@ func (h *AdminHandler) GetSummary(c *gin.Context) {
 	if err := h.DB.
 		Preload("Market").
 		Preload("Commodity").
+		Preload("Commodity.StandardUnit").
+		Preload("StandardUnit").
+		Preload("LocalUnit").
 		Find(&entries).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load summary data"})
 		return
@@ -492,14 +522,16 @@ func buildCSVContent(scope string, year int, entries []models.DataEntry) ([]byte
 
 	switch scope {
 	case "summary":
-		if err := writer.Write([]string{"year", "market", "commodity", "average_price", "min_price", "max_price", "count"}); err != nil {
+		if err := writer.Write([]string{"year", "market", "commodity_id", "commodity", "standard_weight", "average_price", "min_price", "max_price", "count"}); err != nil {
 			return nil, err
 		}
 		for _, row := range services.BuildMarketSummary(entries, year) {
 			record := []string{
 				strconv.Itoa(row.Year),
 				row.MarketName,
+				row.CommodityCode,
 				row.CommodityName,
+				row.StandardWeight,
 				strconv.FormatFloat(row.AveragePrice, 'f', 2, 64),
 				strconv.FormatFloat(row.MinPrice, 'f', 2, 64),
 				strconv.FormatFloat(row.MaxPrice, 'f', 2, 64),
@@ -510,7 +542,7 @@ func buildCSVContent(scope string, year int, entries []models.DataEntry) ([]byte
 			}
 		}
 	case "comparison":
-		if err := writer.Write([]string{"current_year", "previous_year", "market", "commodity", "current_average", "previous_average", "delta", "delta_percent"}); err != nil {
+		if err := writer.Write([]string{"current_year", "previous_year", "market", "commodity_id", "commodity", "standard_weight", "current_average", "previous_average", "delta", "delta_percent"}); err != nil {
 			return nil, err
 		}
 		for _, row := range services.BuildMarketComparison(entries, year) {
@@ -518,7 +550,9 @@ func buildCSVContent(scope string, year int, entries []models.DataEntry) ([]byte
 				strconv.Itoa(row.CurrentYear),
 				strconv.Itoa(row.PreviousYear),
 				row.MarketName,
+				row.CommodityCode,
 				row.CommodityName,
+				row.StandardWeight,
 				strconv.FormatFloat(row.CurrentAverage, 'f', 2, 64),
 				strconv.FormatFloat(row.PreviousAverage, 'f', 2, 64),
 				strconv.FormatFloat(row.Delta, 'f', 2, 64),
@@ -529,16 +563,21 @@ func buildCSVContent(scope string, year int, entries []models.DataEntry) ([]byte
 			}
 		}
 	case "entries":
-		if err := writer.Write([]string{"id", "year", "market", "collector", "category", "commodity", "market_price", "minimum_price", "maximum_price", "warning_status", "created_at", "notes"}); err != nil {
+		if err := writer.Write([]string{"id", "year", "market", "collector", "category", "commodity_id", "commodity", "market_price", "minimum_price", "maximum_price", "warning_status", "created_at", "notes"}); err != nil {
 			return nil, err
 		}
 		for _, row := range entries {
+			commodityID := row.Commodity.Code
+			if commodityID == "" {
+				commodityID = strconv.Itoa(row.CommodityID)
+			}
 			record := []string{
 				strconv.Itoa(row.ID),
 				strconv.Itoa(row.Year),
 				row.Market.Name,
 				row.Collector.FullName,
 				row.Category.Name,
+				commodityID,
 				row.Commodity.Name,
 				strconv.FormatFloat(row.MarketPrice, 'f', 2, 64),
 				strconv.FormatFloat(row.MinimumPrice, 'f', 2, 64),
@@ -691,12 +730,13 @@ func (h *AdminHandler) UpdateCommodity(c *gin.Context) {
 	commodity.Code = req.Code
 	commodity.Name = req.Name
 	commodity.CategoryID = req.CategoryID
+	commodity.StandardUnitID = req.StandardUnitID
 	commodity.BrandType = req.BrandType
 	if err := h.DB.Save(&commodity).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update commodity"})
 		return
 	}
-	_ = h.DB.Preload("Category").First(&commodity, commodity.ID)
+	_ = h.DB.Preload("Category").Preload("StandardUnit").First(&commodity, commodity.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "commodity updated", "data": commodity})
 }
 
@@ -748,7 +788,13 @@ func (h *AdminHandler) UpdateUnit(c *gin.Context) {
 	}
 	unit.Name = req.Name
 	unit.IsStandard = req.IsStandard
-	unit.ConversionFactor = req.ConversionFactor
+	if req.StandardValue > 0 {
+		unit.StandardValue = req.StandardValue
+	}
+	unit.StandardUnitName = req.StandardUnitName
+	if req.ConversionFactor > 0 {
+		unit.ConversionFactor = req.ConversionFactor
+	}
 	if err := h.DB.Save(&unit).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update unit"})
 		return

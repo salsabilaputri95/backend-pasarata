@@ -51,21 +51,25 @@ type CommodityCategory struct {
 }
 
 type Commodity struct {
-	ID         int               `gorm:"primaryKey;autoIncrement" json:"id"`
-	Code       string            `gorm:"not null;unique" json:"code"`
-	Name       string            `gorm:"not null" json:"name"`
-	CategoryID int               `gorm:"not null" json:"category_id"`
-	Category   CommodityCategory `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
-	BrandType  string            `gorm:"type:varchar(100)" json:"brand_type,omitempty"`
-	Active     bool              `gorm:"default:true" json:"active"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
+	ID             int               `gorm:"primaryKey;autoIncrement" json:"id"`
+	Code           string            `gorm:"not null;unique" json:"code"`
+	Name           string            `gorm:"not null" json:"name"`
+	CategoryID     int               `gorm:"not null" json:"category_id"`
+	Category       CommodityCategory `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	StandardUnitID *int              `json:"standard_unit_id,omitempty"`
+	StandardUnit   *Unit             `gorm:"foreignKey:StandardUnitID" json:"standard_unit,omitempty"`
+	BrandType      string            `gorm:"type:varchar(100)" json:"brand_type,omitempty"`
+	Active         bool              `gorm:"default:true" json:"active"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
 }
 
 type Unit struct {
 	ID               int       `gorm:"primaryKey;autoIncrement" json:"id"`
 	Name             string    `gorm:"not null" json:"name"`
 	IsStandard       bool      `gorm:"default:false" json:"is_standard"`
+	StandardValue    float64   `gorm:"type:decimal(18,4);default:1" json:"standard_value"`
+	StandardUnitName string    `gorm:"type:varchar(50);default:''" json:"standard_unit_name"`
 	ConversionFactor float64   `gorm:"type:decimal(18,8);default:1" json:"conversion_factor"`
 	Active           bool      `gorm:"default:true" json:"active"`
 	CreatedAt        time.Time `json:"created_at"`

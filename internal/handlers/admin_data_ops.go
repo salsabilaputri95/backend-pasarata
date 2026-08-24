@@ -503,12 +503,14 @@ func buildXLSXContent(scope string, year int, entries []models.DataEntry) ([]byt
 	rows := [][]string{}
 	switch scope {
 	case "summary":
-		rows = append(rows, []string{"year", "market", "commodity", "average_price", "min_price", "max_price", "count"})
+		rows = append(rows, []string{"year", "market", "commodity_id", "commodity", "standard_weight", "average_price", "min_price", "max_price", "count"})
 		for _, row := range services.BuildMarketSummary(entries, year) {
 			rows = append(rows, []string{
 				strconv.Itoa(row.Year),
 				row.MarketName,
+				row.CommodityCode,
 				row.CommodityName,
+				row.StandardWeight,
 				strconv.FormatFloat(row.AveragePrice, 'f', 2, 64),
 				strconv.FormatFloat(row.MinPrice, 'f', 2, 64),
 				strconv.FormatFloat(row.MaxPrice, 'f', 2, 64),
@@ -516,13 +518,15 @@ func buildXLSXContent(scope string, year int, entries []models.DataEntry) ([]byt
 			})
 		}
 	case "comparison":
-		rows = append(rows, []string{"current_year", "previous_year", "market", "commodity", "current_average", "previous_average", "delta", "delta_percent"})
+		rows = append(rows, []string{"current_year", "previous_year", "market", "commodity_id", "commodity", "standard_weight", "current_average", "previous_average", "delta", "delta_percent"})
 		for _, row := range services.BuildMarketComparison(entries, year) {
 			rows = append(rows, []string{
 				strconv.Itoa(row.CurrentYear),
 				strconv.Itoa(row.PreviousYear),
 				row.MarketName,
+				row.CommodityCode,
 				row.CommodityName,
+				row.StandardWeight,
 				strconv.FormatFloat(row.CurrentAverage, 'f', 2, 64),
 				strconv.FormatFloat(row.PreviousAverage, 'f', 2, 64),
 				strconv.FormatFloat(row.Delta, 'f', 2, 64),
@@ -530,14 +534,19 @@ func buildXLSXContent(scope string, year int, entries []models.DataEntry) ([]byt
 			})
 		}
 	case "entries":
-		rows = append(rows, []string{"id", "year", "market", "collector", "category", "commodity", "market_price", "minimum_price", "maximum_price", "warning_status", "created_at", "notes"})
+		rows = append(rows, []string{"id", "year", "market", "collector", "category", "commodity_id", "commodity", "market_price", "minimum_price", "maximum_price", "warning_status", "created_at", "notes"})
 		for _, row := range entries {
+			commodityID := row.Commodity.Code
+			if commodityID == "" {
+				commodityID = strconv.Itoa(row.CommodityID)
+			}
 			rows = append(rows, []string{
 				strconv.Itoa(row.ID),
 				strconv.Itoa(row.Year),
 				row.Market.Name,
 				row.Collector.FullName,
 				row.Category.Name,
+				commodityID,
 				row.Commodity.Name,
 				strconv.FormatFloat(row.MarketPrice, 'f', 2, 64),
 				strconv.FormatFloat(row.MinimumPrice, 'f', 2, 64),

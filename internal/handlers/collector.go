@@ -20,7 +20,7 @@ type CollectorHandler struct {
 
 type EntryCreateRequest struct {
 	Year           int     `json:"year" binding:"required"`
-	MarketID       int     `json:"market_id" binding:"required"`
+	MarketID       int     `json:"market_id"`
 	CategoryID     int     `json:"category_id" binding:"required"`
 	CommodityID    int     `json:"commodity_id" binding:"required"`
 	BrandType      string  `json:"brand_type"`
@@ -56,14 +56,21 @@ func (h *CollectorHandler) Dashboard(c *gin.Context) {
 		return
 	}
 
+	var assignedMarket gin.H
 	markets := make([]gin.H, 0, len(assignments))
 	for _, assignment := range assignments {
-		markets = append(markets, gin.H{
+		m := gin.H{
 			"id":       assignment.MarketID,
 			"name":     assignment.Market.Name,
 			"district": assignment.Market.District,
 			"nks":      assignment.Market.NKS,
-		})
+			"province": assignment.Market.Province,
+		}
+		markets = append(markets, m)
+	}
+
+	if len(markets) > 0 {
+		assignedMarket = markets[0]
 	}
 
 	entryQuery := h.DB.Where("collector_id = ?", collectorID)
@@ -95,6 +102,7 @@ func (h *CollectorHandler) Dashboard(c *gin.Context) {
 		"collector_id":      collectorID,
 		"year":              yearFilter,
 		"assigned_markets":  len(assignments),
+		"assigned_market":   assignedMarket,
 		"markets":           markets,
 		"total_entries":     totalActive,
 		"inactive_entries":  totalInactive,
@@ -112,9 +120,18 @@ func (h *CollectorHandler) CreateEntry(c *gin.Context) {
 		return
 	}
 
-	if err := h.ensureMarketAssignment(collectorID, req.MarketID); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
+	if req.MarketID <= 0 {
+		var assignment models.UserMarketAssignment
+		if err := h.DB.Where("user_id = ?", collectorID).First(&assignment).Error; err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "pendata belum ditugaskan ke pasar mana pun"})
+			return
+		}
+		req.MarketID = assignment.MarketID
+	} else {
+		if err := h.ensureMarketAssignment(collectorID, req.MarketID); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	if err := validateEntryRequest(req); err != nil {
@@ -164,9 +181,13 @@ func (h *CollectorHandler) UpdateEntry(c *gin.Context) {
 		return
 	}
 
-	if err := h.ensureMarketAssignment(collectorID, req.MarketID); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
+	if req.MarketID <= 0 {
+		req.MarketID = entry.MarketID
+	} else {
+		if err := h.ensureMarketAssignment(collectorID, req.MarketID); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	if err := validateEntryRequest(req); err != nil {
